@@ -1,14 +1,22 @@
 using System;
 using UnityEngine;
+using UnityEngine.Events;//Added by Kitbashery.
 using System.Collections.Generic;
 using System.Collections;
 using CommandUndoRedo;
+using Kitbashery;
+using UnityEngine.Rendering;
 
 namespace RuntimeGizmos
 {
 	//To be safe, if you are changing any transforms hierarchy, such as parenting an object to something,
 	//you should call ClearTargets before doing so just to be sure nothing unexpected happens... as well as call UndoRedoManager.Clear()
 	//For example, if you select an object that has children, move the children elsewhere, deselect the original object, then try to add those old children to the selection, I think it wont work.
+
+
+    //Changes by Kitbashery:
+    //Made outline material public for ease of swapping it out.
+    //Added onSelected UnityEvent.
 
 	[RequireComponent(typeof(Camera))]
 	public class TransformGizmo : MonoBehaviour
@@ -118,35 +126,47 @@ namespace RuntimeGizmos
 		HashSet<Renderer> highlightedRenderers = new HashSet<Renderer>();
 		HashSet<Transform> children = new HashSet<Transform>();
 
-		List<Transform> childrenBuffer = new List<Transform>();
-		List<Renderer> renderersBuffer = new List<Renderer>();
+        List<Transform> childrenBuffer = new List<Transform>();
+        List<Renderer> renderersBuffer = new List<Renderer>();
 		List<Material> materialsBuffer = new List<Material>();
 
 		WaitForEndOfFrame waitForEndOFFrame = new WaitForEndOfFrame();
 		Coroutine forceUpdatePivotCoroutine;
 
 		static Material lineMaterial;
-		static Material outlineMaterial;
+		public Material outlineMaterial;
 
-		void Awake()
+        [Space]
+        [Header("Kitbashery:")]
+        public BuildModeUI buildControls;
+        public UnityEvent onSelected;
+        public UnityEvent onDeselect;
+
+        void Awake()
 		{
 			myCamera = GetComponent<Camera>();
 			SetMaterial();
 		}
 
-		void OnEnable()
-		{
-			forceUpdatePivotCoroutine = StartCoroutine(ForceUpdatePivotPointAtEndOfFrame());
-		}
+        private void RenderPipelineManager_endCameraRendering(ScriptableRenderContext context, Camera camera)
+        {
+            OnPostRender();
+        }
 
-		void OnDisable()
-		{
-			ClearTargets(); //Just so things gets cleaned up, such as removing any materials we placed on objects.
+        void OnEnable()
+        {
+            RenderPipelineManager.endCameraRendering += RenderPipelineManager_endCameraRendering;
+            forceUpdatePivotCoroutine = StartCoroutine(ForceUpdatePivotPointAtEndOfFrame());
+        }
 
-			StopCoroutine(forceUpdatePivotCoroutine);
-		}
+        void OnDisable()
+        {
+            ClearTargets();
+            RenderPipelineManager.endCameraRendering -= RenderPipelineManager_endCameraRendering;
+            StopCoroutine(forceUpdatePivotCoroutine);
+        }
 
-		void OnDestroy()
+        void OnDestroy()
 		{
 			ClearAllHighlightedRenderers();
 		}
@@ -186,69 +206,71 @@ namespace RuntimeGizmos
 			}
 		}
 
-		void OnPostRender()
-		{
-			if(mainTargetRoot == null || manuallyHandleGizmo) return;
+        void OnPostRender()
+        {
+            if (mainTargetRoot == null || manuallyHandleGizmo) return;
 
-			lineMaterial.SetPass(0);
+            lineMaterial.SetPass(0);
 
-			Color xColor = (nearAxis == Axis.X) ? (isTransforming) ? selectedColor : hoverColor : this.xColor;
-			Color yColor = (nearAxis == Axis.Y) ? (isTransforming) ? selectedColor : hoverColor : this.yColor;
-			Color zColor = (nearAxis == Axis.Z) ? (isTransforming) ? selectedColor : hoverColor : this.zColor;
-			Color allColor = (nearAxis == Axis.Any) ? (isTransforming) ? selectedColor : hoverColor : this.allColor;
+            Color xColor = (nearAxis == Axis.X) ? (isTransforming) ? selectedColor : hoverColor : this.xColor;
+            Color yColor = (nearAxis == Axis.Y) ? (isTransforming) ? selectedColor : hoverColor : this.yColor;
+            Color zColor = (nearAxis == Axis.Z) ? (isTransforming) ? selectedColor : hoverColor : this.zColor;
+            Color allColor = (nearAxis == Axis.Any) ? (isTransforming) ? selectedColor : hoverColor : this.allColor;
 
-			//Note: The order of drawing the axis decides what gets drawn over what.
+            //Note: The order of drawing the axis decides what gets drawn over what.
 
-			TransformType moveOrScaleType = (transformType == TransformType.Scale || (isTransforming && translatingType == TransformType.Scale)) ? TransformType.Scale : TransformType.Move;
-			DrawQuads(handleLines.z, GetColor(moveOrScaleType, this.zColor, zColor, hasTranslatingAxisPlane));
-			DrawQuads(handleLines.x, GetColor(moveOrScaleType, this.xColor, xColor, hasTranslatingAxisPlane));
-			DrawQuads(handleLines.y, GetColor(moveOrScaleType, this.yColor, yColor, hasTranslatingAxisPlane));
+            TransformType moveOrScaleType = (transformType == TransformType.Scale || (isTransforming && translatingType == TransformType.Scale)) ? TransformType.Scale : TransformType.Move;
+            DrawQuads(handleLines.z, GetColor(moveOrScaleType, this.zColor, zColor, hasTranslatingAxisPlane));
+            DrawQuads(handleLines.x, GetColor(moveOrScaleType, this.xColor, xColor, hasTranslatingAxisPlane));
+            DrawQuads(handleLines.y, GetColor(moveOrScaleType, this.yColor, yColor, hasTranslatingAxisPlane));
 
-			DrawTriangles(handleTriangles.x, GetColor(TransformType.Move, this.xColor, xColor, hasTranslatingAxisPlane));
-			DrawTriangles(handleTriangles.y, GetColor(TransformType.Move, this.yColor, yColor, hasTranslatingAxisPlane));
-			DrawTriangles(handleTriangles.z, GetColor(TransformType.Move, this.zColor, zColor, hasTranslatingAxisPlane));
+            DrawTriangles(handleTriangles.x, GetColor(TransformType.Move, this.xColor, xColor, hasTranslatingAxisPlane));
+            DrawTriangles(handleTriangles.y, GetColor(TransformType.Move, this.yColor, yColor, hasTranslatingAxisPlane));
+            DrawTriangles(handleTriangles.z, GetColor(TransformType.Move, this.zColor, zColor, hasTranslatingAxisPlane));
 
-			DrawQuads(handlePlanes.z, GetColor(TransformType.Move, this.zColor, zColor, planesOpacity, !hasTranslatingAxisPlane));
-			DrawQuads(handlePlanes.x, GetColor(TransformType.Move, this.xColor, xColor, planesOpacity, !hasTranslatingAxisPlane));
-			DrawQuads(handlePlanes.y, GetColor(TransformType.Move, this.yColor, yColor, planesOpacity, !hasTranslatingAxisPlane));
+            DrawQuads(handlePlanes.z, GetColor(TransformType.Move, this.zColor, zColor, planesOpacity, !hasTranslatingAxisPlane));
+            DrawQuads(handlePlanes.x, GetColor(TransformType.Move, this.xColor, xColor, planesOpacity, !hasTranslatingAxisPlane));
+            DrawQuads(handlePlanes.y, GetColor(TransformType.Move, this.yColor, yColor, planesOpacity, !hasTranslatingAxisPlane));
 
-			DrawQuads(handleSquares.x, GetColor(TransformType.Scale, this.xColor, xColor));
-			DrawQuads(handleSquares.y, GetColor(TransformType.Scale, this.yColor, yColor));
-			DrawQuads(handleSquares.z, GetColor(TransformType.Scale, this.zColor, zColor));
-			DrawQuads(handleSquares.all, GetColor(TransformType.Scale, this.allColor, allColor));
+            DrawQuads(handleSquares.x, GetColor(TransformType.Scale, this.xColor, xColor));
+            DrawQuads(handleSquares.y, GetColor(TransformType.Scale, this.yColor, yColor));
+            DrawQuads(handleSquares.z, GetColor(TransformType.Scale, this.zColor, zColor));
+            DrawQuads(handleSquares.all, GetColor(TransformType.Scale, this.allColor, allColor));
 
-			DrawQuads(circlesLines.all, GetColor(TransformType.Rotate, this.allColor, allColor));
-			DrawQuads(circlesLines.x, GetColor(TransformType.Rotate, this.xColor, xColor));
-			DrawQuads(circlesLines.y, GetColor(TransformType.Rotate, this.yColor, yColor));
-			DrawQuads(circlesLines.z, GetColor(TransformType.Rotate, this.zColor, zColor));
-		}
+            DrawQuads(circlesLines.all, GetColor(TransformType.Rotate, this.allColor, allColor));
+            DrawQuads(circlesLines.x, GetColor(TransformType.Rotate, this.xColor, xColor));
+            DrawQuads(circlesLines.y, GetColor(TransformType.Rotate, this.yColor, yColor));
+            DrawQuads(circlesLines.z, GetColor(TransformType.Rotate, this.zColor, zColor));
+        }
 
-		Color GetColor(TransformType type, Color normalColor, Color nearColor, bool forceUseNormal = false)
-		{
-			return GetColor(type, normalColor, nearColor, false, 1, forceUseNormal);
-		}
-		Color GetColor(TransformType type, Color normalColor, Color nearColor, float alpha, bool forceUseNormal = false)
-		{
-			return GetColor(type, normalColor, nearColor, true, alpha, forceUseNormal);
-		}
-		Color GetColor(TransformType type, Color normalColor, Color nearColor, bool setAlpha, float alpha, bool forceUseNormal = false)
-		{
-			Color color;
-			if(!forceUseNormal && TranslatingTypeContains(type, false))
-			{
-				color = nearColor;
-			}else{
-				color = normalColor;
-			}
+            Color GetColor(TransformType type, Color normalColor, Color nearColor, bool forceUseNormal = false)
+            {
+                return GetColor(type, normalColor, nearColor, false, 1, forceUseNormal);
+            }
+            Color GetColor(TransformType type, Color normalColor, Color nearColor, float alpha, bool forceUseNormal = false)
+            {
+                return GetColor(type, normalColor, nearColor, true, alpha, forceUseNormal);
+            }
+            Color GetColor(TransformType type, Color normalColor, Color nearColor, bool setAlpha, float alpha, bool forceUseNormal = false)
+            {
+                Color color;
+                if (!forceUseNormal && TranslatingTypeContains(type, false))
+                {
+                    color = nearColor;
+                }
+                else
+                {
+                    color = normalColor;
+                }
 
-			if(setAlpha)
-			{
-				color.a = alpha;
-			}
+                if (setAlpha)
+                {
+                    color.a = alpha;
+                }
 
-			return color;
-		}
-
+                return color;
+            }
+			
 		void HandleUndoRedo()
 		{
 			if(maxUndoStored != UndoRedoManager.maxUndoStored) { UndoRedoManager.maxUndoStored = maxUndoStored; }
@@ -673,8 +695,11 @@ namespace RuntimeGizmos
 
 				AddTargetRoot(target);
 				AddTargetHighlightedRenderers(target);
+                buildControls.SelectPart(target.GetComponent<KitbashPart>());
 
 				SetPivotPoint();
+
+                onSelected.Invoke();
 			}
 		}
 
@@ -688,8 +713,11 @@ namespace RuntimeGizmos
 
 				RemoveTargetHighlightedRenderers(target);
 				RemoveTargetRoot(target);
+                buildControls.DeselectPart(target.GetComponent<KitbashPart>());
 
-				SetPivotPoint();
+                SetPivotPoint();
+
+                onDeselect.Invoke();
 			}
 		}
 
@@ -1418,7 +1446,6 @@ namespace RuntimeGizmos
 			if(lineMaterial == null)
 			{
 				lineMaterial = new Material(Shader.Find("Custom/Lines"));
-				outlineMaterial = new Material(Shader.Find("Custom/Outline"));
 			}
 		}
 	}
